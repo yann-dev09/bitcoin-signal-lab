@@ -1,0 +1,65 @@
+{
+  "overall_average_sentiment": -0.04723999999999999,
+  "articles": [
+    {
+      "headline": "Bitcoin\u2019s low volatility doesn\u2019t necessarily mean low risk",
+      "date": "2026-08-06 11:37 UTC",
+      "sentiment": "Negative",
+      "compound": -0.6486
+    },
+    {
+      "headline": "Why Sandisk and Western Digital crashed 10% and what it means for bitcoin",
+      "date": "2026-08-06 11:14 UTC",
+      "sentiment": "Neutral",
+      "compound": 0.0
+    },
+    {
+      "headline": "Bitcoin, ether benefit as traders seek safety of largest tokens",
+      "date": "2026-08-06 10:43 UTC",
+      "sentiment": "Positive",
+      "compound": 0.7003
+    },
+    {
+      "headline": "Live updates: Bitcoin flatlines near $64,000 ahead of Friday's jobs report",
+      "date": "2026-08-06 07:26 UTC",
+      "sentiment": "Neutral",
+      "compound": 0.0
+    },
+    {
+      "headline": "Bitcoin developers flag 85 critical bugs in an \"extremely bad\" situation",
+      "date": "2026-08-06 07:14 UTC",
+      "sentiment": "Negative",
+      "compound": -0.7264
+    },
+    {
+      "headline": "S&P 500 added all of crypto's $2 trillion market cap in a month while bitcoin barely moved. Here's why",
+      "date": "2026-08-06 06:10 UTC",
+      "sentiment": "Neutral",
+      "compound": 0.0
+    },
+    {
+      "headline": "Bitcoin steadies above $64,000 as traders watch $100 billion SpaceX unlock",
+      "date": "2026-08-06 04:59 UTC",
+      "sentiment": "Neutral",
+      "compound": 0.0
+    },
+    {
+      "headline": "Coldcard exploit could boost demand for regulated bitcoin exposure, analysts say",
+      "date": "2026-08-05 15:44 UTC",
+      "sentiment": "Positive",
+      "compound": 0.2023
+    },
+    {
+      "headline": "Crypto Long & Short: Putting the bitcoin sizing question to the test",
+      "date": "2026-08-05 15:03 UTC",
+      "sentiment": "Neutral",
+      "compound": 0.0
+    },
+    {
+      "headline": "Strategy\u2019s STRC rebounds 30% as company builds cash reserve, bitcoin price stabilizes",
+      "date": "2026-08-05 14:44 UTC",
+      "sentiment": "Neutral",
+      "compound": 0.0
+    }
+  ]
+}

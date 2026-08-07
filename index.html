@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BTC Candlestick Chart — Hammer Detection & Sentiment</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #131722;
+            color: #d1d4dc;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            padding: 16px 24px;
+            background: #1e222d;
+            border-bottom: 1px solid #2a2e39;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        header h1 span {
+            color: #f7931a;
+        }
+
+        .status {
+            font-size: 13px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            background: #2a2e39;
+            color: #d1d4dc;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #f7931a;
+            animation: pulse 1.5s infinite;
+        }
+
+        .status.loaded .dot {
+            background: #26a69a;
+            animation: none;
+        }
+
+        .status.error .dot {
+            background: #ef5350;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .info-bar {
+            padding: 10px 24px;
+            background: #1e222d;
+            border-bottom: 1px solid #2a2e39;
+            font-size: 13px;
+            color: #787b86;
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .info-bar strong {
+            color: #f7931a;
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+            color: #d1d4dc;
+        }
+
+        .legend .item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend .swatch {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+            display: inline-block;
+        }
+
+        .legend .swatch.up { background: #26a69a; }
+        .legend .swatch.down { background: #ef5350; }
+        .legend .swatch.hammer { background: #f7931a; }
+
+        /* ---------- Sentiment panel ---------- */
+        .main-layout {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        #chart-container {
+            flex: 1;
+            min-height: 400px;
+            padding: 16px 24px 8px;
+        }
+
+        #chart {
+            width: 100%;
+            height: 100%;
+            min-height: 400px;
+        }
+
+        .sentiment-panel {
+            margin: 8px 24px 16px;
+            background: #1e222d;
+            border: 1px solid #2a2e39;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .sentiment-panel .panel-header {
+            padding: 14px 20px;
+            background: #2a2e39;
+            border-bottom: 1px solid #363a45;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .sentiment-panel .panel-header h2 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .sentiment-panel .panel-header h2 span {
+            color: #f7931a;
+        }
+
+        .overall-score {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: #d1d4dc;
+        }
+
+        .overall-score .score-value {
+            font-size: 18px;
+            font-weight: 700;
+            padding: 4px 12px;
+            border-radius: 6px;
+            background: #131722;
+        }
+
+        .overall-score .score-value.positive { color: #26a69a; }
+        .overall-score .score-value.negative { color: #ef5350; }
+        .overall-score .score-value.neutral { color: #787b86; }
+
+        .sentiment-list {
+            max-height: 320px;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+
+        .sentiment-list::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .sentiment-list::-webkit-scrollbar-track {
+            background: #1e222d;
+        }
+
+        .sentiment-list::-webkit-scrollbar-thumb {
+            background: #363a45;
+            border-radius: 4px;
+        }
+
+        .sentiment-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 10px 20px;
+            border-bottom: 1px solid #2a2e39;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .sentiment-item:last-child {
+            border-bottom: none;
+        }
+
+        .sentiment-item .badge {
+            flex-shrink: 0;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 1px;
+        }
+
+        .sentiment-item .badge.positive { background: rgba(38, 166, 154, 0.15); color: #26a69a; }
+        .sentiment-item .badge.negative { background: rgba(239, 83, 80, 0.15); color: #ef5350; }
+        .sentiment-item .badge.neutral { background: rgba(120, 123, 134, 0.15); color: #787b86; }
+
+        .sentiment-item .item-body {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .sentiment-item .headline {
+            color: #d1d4dc;
+            word-wrap: break-word;
+        }
+
+        .sentiment-item .meta {
+            margin-top: 4px;
+            font-size: 11px;
+            color: #787b86;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .sentiment-item .meta .compound {
+            font-family: 'Consolas', 'Courier New', monospace;
+        }
+
+        .sentiment-item .meta .compound.positive { color: #26a69a; }
+        .sentiment-item .meta .compound.negative { color: #ef5350; }
+        .sentiment-item .meta .compound.neutral { color: #787b86; }
+
+        .sentiment-empty {
+            padding: 24px;
+            text-align: center;
+            color: #787b86;
+            font-size: 13px;
+        }
+
+        /* ---------- Signal banner ---------- */
+        .signal-banner {
+            margin: 12px 24px 0;
+            padding: 14px 20px;
+            border-radius: 8px;
+            border: 1px solid #2a2e39;
+            background: #1e222d;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .signal-banner .signal-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #787b86;
+        }
+
+        .signal-banner .signal-value {
+            font-size: 22px;
+            font-weight: 700;
+            padding: 4px 16px;
+            border-radius: 6px;
+            background: #131722;
+        }
+
+        .signal-banner .signal-value.bullish { color: #26a69a; }
+        .signal-banner .signal-value.bearish { color: #ef5350; }
+        .signal-banner .signal-value.neutral { color: #787b86; }
+        .signal-banner .signal-value.cautious { color: #f7931a; }
+
+        .signal-banner .signal-reason {
+            font-size: 13px;
+            color: #d1d4dc;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .signal-banner .signal-metrics {
+            font-size: 12px;
+            color: #787b86;
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .signal-banner .signal-metrics strong {
+            color: #d1d4dc;
+        }
+
+        footer {
+            padding: 12px 24px;
+            font-size: 12px;
+            color: #787b86;
+            border-top: 1px solid #2a2e39;
+            text-align: center;
+        }
+
+        footer code {
+            background: #2a2e39;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #d1d4dc;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>BTC/USD <span>Daily Candles</span></h1>
+        <div class="status" id="status">
+            <span class="dot"></span>
+            <span id="status-text">Loading data...</span>
+        </div>
+    </header>
+
+    <div class="info-bar">
+        <div class="legend">
+            <span class="item"><span class="swatch up"></span> Bullish</span>
+            <span class="item"><span class="swatch down"></span> Bearish</span>
+            <span class="item"><span class="swatch hammer"></span> Hammer pattern</span>
+        </div>
+        <span id="candle-count">Candles: —</span>
+        <span id="hammer-count">Hammers: —</span>
+    </div>
+
+    <div class="signal-banner" id="signal-banner">
+        <div>
+            <div class="signal-label">Trading Signal</div>
+            <div class="signal-value neutral" id="signal-value">—</div>
+        </div>
+        <div class="signal-reason" id="signal-reason">Calculating signal...</div>
+        <div class="signal-metrics" id="signal-metrics"></div>
+    </div>
+
+    <div class="main-layout">
+        <div id="chart-container">
+            <div id="chart"></div>
+        </div>
+
+        <div class="sentiment-panel" id="sentiment-panel">
+            <div class="panel-header">
+                <h2>News <span>Sentiment</span></h2>
+                <div class="overall-score">
+                    <span>Overall average:</span>
+                    <span class="score-value neutral" id="overall-score">—</span>
+                </div>
+            </div>
+            <div class="sentiment-list" id="sentiment-list">
+                <div class="sentiment-empty">Loading sentiment data...</div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        Data: <code>btc_data.csv</code> &nbsp;|&nbsp; Patterns: <code>hammers.json</code> &nbsp;|&nbsp; Sentiment: <code>sentiment.json</code> &nbsp;|&nbsp; Fundamentals: <code>fundamentals.json</code> &nbsp;|&nbsp;
+        Run <code>python detect_hammer.py</code>, <code>python sentiment.py</code>, and <code>python fetch_fundamentals.py</code> to regenerate data.
+    </footer>
+
+    <!-- lightweight-charts via CDN (no npm needed) -->
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+
+    <script>
+        // ---------- Simple CSV parser ----------
+        // Handles quoted fields, commas inside quotes, and \r\n line endings.
+        function parseCSV(text) {
+            const rows = [];
+            let row = [];
+            let field = '';
+            let inQuotes = false;
+
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+
+                if (inQuotes) {
+                    if (ch === '"') {
+                        if (text[i + 1] === '"') {
+                            field += '"';
+                            i++;
+                        } else {
+                            inQuotes = false;
+                        }
+                    } else {
+                        field += ch;
+                    }
+                } else {
+                    if (ch === '"') {
+                        inQuotes = true;
+                    } else if (ch === ',') {
+                        row.push(field);
+                        field = '';
+                    } else if (ch === '\n') {
+                        row.push(field);
+                        field = '';
+                        if (row.length > 1 || row[0] !== '') {
+                            rows.push(row);
+                        }
+                        row = [];
+                    } else if (ch === '\r') {
+                        // skip carriage return, handled by \n
+                    } else {
+                        field += ch;
+                    }
+                }
+            }
+
+            // Handle last field/row if no trailing newline
+            if (field !== '' || row.length > 0) {
+                row.push(field);
+                if (row.length > 1 || row[0] !== '') {
+                    rows.push(row);
+                }
+            }
+
+            return rows;
+        }
+
+        // ---------- Load data ----------
+        async function loadData() {
+            const [csvText, hammersText, sentimentText, fundamentalsText] = await Promise.all([
+                fetch('btc_data.csv').then(r => {
+                    if (!r.ok) throw new Error('Could not load btc_data.csv');
+                    return r.text();
+                }),
+                fetch('hammers.json').then(r => {
+                    if (!r.ok) throw new Error('Could not load hammers.json');
+                    return r.text();
+                }),
+                fetch('sentiment.json').then(r => {
+                    if (!r.ok) throw new Error('Could not load sentiment.json');
+                    return r.text();
+                }),
+                // fundamentals.json is optional - if missing, fundamentals will be null
+                fetch('fundamentals.json').then(r => {
+                    if (!r.ok) throw new Error('Could not load fundamentals.json');
+                    return r.text();
+                }).catch(() => 'null')
+            ]);
+
+            // Parse CSV
+            const rows = parseCSV(csvText);
+            if (rows.length < 2) {
+                throw new Error('btc_data.csv is empty or missing header');
+            }
+
+            const header = rows[0].map(h => h.trim().toLowerCase());
+            const dateIdx = header.indexOf('date');
+            const openIdx = header.indexOf('open');
+            const highIdx = header.indexOf('high');
+            const lowIdx = header.indexOf('low');
+            const closeIdx = header.indexOf('close');
+
+            if ([dateIdx, openIdx, highIdx, lowIdx, closeIdx].some(i => i === -1)) {
+                throw new Error('btc_data.csv must have columns: date,open,high,low,close');
+            }
+
+            const candles = rows.slice(1).map(r => ({
+                time: r[dateIdx].trim(),
+                open: parseFloat(r[openIdx]),
+                high: parseFloat(r[highIdx]),
+                low: parseFloat(r[lowIdx]),
+                close: parseFloat(r[closeIdx])
+            })).filter(c => !isNaN(c.open) && !isNaN(c.high) && !isNaN(c.low) && !isNaN(c.close));
+
+            // Parse hammers.json
+            const hammers = JSON.parse(hammersText);
+            const hammerDates = new Set(hammers.map(h => h.date));
+
+            // Parse sentiment.json
+            const sentiment = JSON.parse(sentimentText);
+
+            // Parse fundamentals.json (may be null if file doesn't exist)
+            const fundamentals = JSON.parse(fundamentalsText);
+
+            return { candles, hammerDates, sentiment, fundamentals };
+        }
+
+        // ---------- Build chart ----------
+        function buildChart(candles, hammerDates) {
+            const container = document.getElementById('chart');
+            const chart = LightweightCharts.createChart(container, {
+                layout: {
+                    background: { type: 'solid', color: '#131722' },
+                    textColor: '#d1d4dc',
+                    fontSize: 12
+                },
+                grid: {
+                    vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
+                    horzLines: { color: 'rgba(42, 46, 57, 0.5)' }
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal
+                },
+                rightPriceScale: {
+                    borderColor: '#2a2e39'
+                },
+                timeScale: {
+                    borderColor: '#2a2e39',
+                    timeVisible: false
+                },
+                autoSize: true
+            });
+
+            const series = chart.addCandlestickSeries({
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderUpColor: '#26a69a',
+                borderDownColor: '#ef5350',
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350'
+            });
+
+            series.setData(candles);
+
+            // Add hammer markers below the candle
+            const markers = candles
+                .filter(c => hammerDates.has(c.time))
+                .map(c => ({
+                    time: c.time,
+                    position: 'belowBar',
+                    color: '#f7931a',
+                    shape: 'arrowUp',
+                    text: 'Hammer'
+                }));
+
+            series.setMarkers(markers);
+
+            // Fit the chart to show all data
+            chart.timeScale().fitContent();
+
+            return { chart, series, markers };
+        }
+
+        // ---------- RSI calculation (Wilder's smoothing) ----------
+        function calculateRSI(closes, period = 14) {
+            if (closes.length < period + 1) return null;
+
+            let gains = 0;
+            let losses = 0;
+
+            // Initial average gain/loss over the first `period` changes
+            for (let i = 1; i <= period; i++) {
+                const diff = closes[i] - closes[i - 1];
+                if (diff >= 0) gains += diff;
+                else losses -= diff;
+            }
+
+            let avgGain = gains / period;
+            let avgLoss = losses / period;
+
+            // Wilder's smoothing for the remaining periods
+            for (let i = period + 1; i < closes.length; i++) {
+                const diff = closes[i] - closes[i - 1];
+                const gain = diff > 0 ? diff : 0;
+                const loss = diff < 0 ? -diff : 0;
+
+                avgGain = (avgGain * (period - 1) + gain) / period;
+                avgLoss = (avgLoss * (period - 1) + loss) / period;
+            }
+
+            if (avgLoss === 0) return 100;
+
+            const rs = avgGain / avgLoss;
+            return 100 - (100 / (1 + rs));
+        }
+
+        // ---------- Fundamentals helpers ----------
+        function computeFundamentalChanges(fundamentals) {
+            if (!fundamentals) return { addrChange: null, txChange: null };
+
+            function lastSevenChange(metricKey) {
+                const series = fundamentals[metricKey]?.series;
+                if (!series || series.length < 2) return null;
+                const last7 = series.slice(-7);
+                const first = last7[0].value;
+                const last = last7[last7.length - 1].value;
+                if (first === 0) return null;
+                return ((last - first) / first) * 100;
+            }
+
+            return {
+                addrChange: lastSevenChange('unique_addresses'),
+                txChange: lastSevenChange('transactions_per_day')
+            };
+        }
+
+        // ---------- Signal determination ----------
+        function determineSignal(candles, hammerDates, sentiment, fundamentals) {
+            const closes = candles.map(c => c.close);
+            const rsi = calculateRSI(closes, 14);
+
+            const overall = sentiment.overall_average_sentiment;
+            const isPositive = overall >= 0.05;
+            const isStronglyNegative = overall <= -0.2;
+
+            // Check if the most recent candle is a hammer
+            const lastCandle = candles[candles.length - 1];
+            const hasRecentHammer = lastCandle && hammerDates.has(lastCandle.time);
+
+            // Fundamentals: % change over the last 7 days
+            const { addrChange, txChange } = computeFundamentalChanges(fundamentals);
+            const txDroppedOver10 = txChange !== null && txChange < -10;
+            const fundamentalsStrong = addrChange !== null && txChange !== null && addrChange > 0 && txChange > 0;
+
+            // Evaluate bullish technicals/sentiment conditions
+            const bullishReasons = [];
+
+            if (rsi !== null && rsi < 30 && isPositive) {
+                bullishReasons.push(`RSI ${rsi.toFixed(1)} < 30 (oversold) + positive sentiment (${overall >= 0 ? '+' : ''}${overall.toFixed(2)})`);
+            }
+
+            if (hasRecentHammer && !isStronglyNegative) {
+                bullishReasons.push(`Hammer pattern on ${lastCandle.time} + sentiment not strongly negative (${overall >= 0 ? '+' : ''}${overall.toFixed(2)})`);
+            }
+
+            let signal, reason;
+
+            if (bullishReasons.length > 0) {
+                if (txDroppedOver10) {
+                    // Fundamentals veto the bullish signal
+                    signal = 'Cautious';
+                    reason = `Bullish technicals but weakening on-chain activity (transactions ${txChange.toFixed(1)}% over 7d)`;
+                } else if (fundamentalsStrong) {
+                    // Fundamentals support the bullish signal
+                    signal = 'Bullish';
+                    reason = `${bullishReasons.join('; ')} + strong on-chain activity (addresses ${addrChange >= 0 ? '+' : ''}${addrChange.toFixed(1)}%, transactions ${txChange >= 0 ? '+' : ''}${txChange.toFixed(1)}% over 7d)`;
+                } else {
+                    signal = 'Bullish';
+                    reason = bullishReasons.join('; ');
+                }
+            } else {
+                signal = 'Neutral';
+                reason = 'No strong bullish confluence (RSI not oversold with positive sentiment, or no recent hammer)';
+            }
+
+            return { signal, reason, rsi, hasRecentHammer, overall, addrChange, txChange };
+        }
+
+        function renderSignal(signal) {
+            const valueEl = document.getElementById('signal-value');
+            const reasonEl = document.getElementById('signal-reason');
+            const metricsEl = document.getElementById('signal-metrics');
+
+            const cls = signal.signal.toLowerCase();
+            valueEl.textContent = signal.signal;
+            valueEl.className = `signal-value ${cls}`;
+            reasonEl.textContent = signal.reason;
+
+            const rsiText = signal.rsi !== null ? signal.rsi.toFixed(1) : 'N/A';
+            const hammerText = signal.hasRecentHammer ? 'Yes' : 'No';
+            const sentimentText = `${signal.overall >= 0 ? '+' : ''}${signal.overall.toFixed(2)}`;
+            const addrText = signal.addrChange !== null ? `${signal.addrChange >= 0 ? '+' : ''}${signal.addrChange.toFixed(1)}%` : 'N/A';
+            const txText = signal.txChange !== null ? `${signal.txChange >= 0 ? '+' : ''}${signal.txChange.toFixed(1)}%` : 'N/A';
+
+            metricsEl.innerHTML = `
+                <span>RSI(14): <strong>${rsiText}</strong></span>
+                <span>Recent hammer: <strong>${hammerText}</strong></span>
+                <span>Avg sentiment: <strong>${sentimentText}</strong></span>
+                <span>Addresses 7d: <strong>${addrText}</strong></span>
+                <span>Transactions 7d: <strong>${txText}</strong></span>
+            `;
+        }
+
+        // ---------- Sentiment panel ----------
+        function sentimentClass(label) {
+            return label.toLowerCase();
+        }
+
+        function renderSentiment(sentiment) {
+            const scoreEl = document.getElementById('overall-score');
+            const listEl = document.getElementById('sentiment-list');
+
+            if (!sentiment || !Array.isArray(sentiment.articles)) {
+                listEl.innerHTML = '<div class="sentiment-empty">No sentiment data available.</div>';
+                return;
+            }
+
+            const overall = sentiment.overall_average_sentiment;
+            const overallLabel = overall >= 0.05 ? 'Positive' : (overall <= -0.05 ? 'Negative' : 'Neutral');
+            const overallClass = sentimentClass(overallLabel);
+
+            scoreEl.textContent = `${overallLabel} (${overall >= 0 ? '+' : ''}${overall.toFixed(4)})`;
+            scoreEl.className = `score-value ${overallClass}`;
+
+            if (sentiment.articles.length === 0) {
+                listEl.innerHTML = '<div class="sentiment-empty">No articles found.</div>';
+                return;
+            }
+
+            listEl.innerHTML = sentiment.articles.map(article => {
+                const label = article.sentiment || 'Neutral';
+                const cls = sentimentClass(label);
+                const compound = article.compound || 0;
+                const compoundStr = `${compound >= 0 ? '+' : ''}${compound.toFixed(2)}`;
+                const date = article.date || '';
+
+                return `
+                    <div class="sentiment-item">
+                        <span class="badge ${cls}">${label}</span>
+                        <div class="item-body">
+                            <div class="headline">${escapeHtml(article.headline || 'Untitled')}</div>
+                            <div class="meta">
+                                <span>${escapeHtml(date)}</span>
+                                <span class="compound ${cls}">compound: ${compoundStr}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // ---------- Main ----------
+        async function main() {
+            const statusEl = document.getElementById('status');
+            const statusText = document.getElementById('status-text');
+            const candleCountEl = document.getElementById('candle-count');
+            const hammerCountEl = document.getElementById('hammer-count');
+
+            try {
+                const { candles, hammerDates, sentiment, fundamentals } = await loadData();
+                const { markers } = buildChart(candles, hammerDates);
+
+                candleCountEl.textContent = `Candles: ${candles.length}`;
+                hammerCountEl.textContent = `Hammers: ${markers.length}`;
+
+                renderSentiment(sentiment);
+
+                const signal = determineSignal(candles, hammerDates, sentiment, fundamentals);
+                renderSignal(signal);
+
+                statusEl.classList.add('loaded');
+                statusEl.classList.remove('error');
+                statusText.textContent = `Loaded ${candles.length} candles, ${markers.length} hammer(s), ${sentiment.articles.length} article(s)`;
+            } catch (err) {
+                console.error(err);
+                statusEl.classList.add('error');
+                statusEl.classList.remove('loaded');
+                statusText.textContent = 'Error: ' + err.message;
+            }
+        }
+
+        main();
+    </script>
+</body>
+</html>
