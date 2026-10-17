@@ -52,6 +52,58 @@ def determine_signal(rsi, is_hammer_candle):
     return "Neutral"
 
 
+def print_return_distribution(group_df, label):
+    """Print the distribution of 3-day forward returns for a signal group.
+
+    For the given group of signals, prints:
+      - minimum, maximum, and median 3-day forward return
+      - count of positive (> +0.5%), negative (< -0.5%), and flat (|r| <= 0.5%) returns
+      - the single largest positive return and the date it occurred
+      - the single largest negative return and the date it occurred
+    """
+    print("=" * 60)
+    print(f"{label.upper()} SIGNAL — 3-DAY FORWARD RETURN DISTRIBUTION")
+    print("=" * 60)
+    if len(group_df) == 0:
+        print("  No signals with a valid 3-day forward window.")
+        print()
+        return
+
+    returns = group_df["fwd_return"]
+    dates = group_df["date"]
+
+    min_ret = returns.min()
+    max_ret = returns.max()
+    median_ret = returns.median()
+
+    # Positive / negative / flat (within +/-0.5%)
+    flat_threshold = 0.005  # 0.5%
+    positive_count = int((returns > flat_threshold).sum())
+    negative_count = int((returns < -flat_threshold).sum())
+    flat_count = len(returns) - positive_count - negative_count
+
+    # Largest positive return and its date
+    max_idx = returns.idxmax()
+    max_pos_date = dates.loc[max_idx]
+    max_pos_ret = returns.loc[max_idx]
+
+    # Largest negative return and its date
+    min_idx = returns.idxmin()
+    min_neg_date = dates.loc[min_idx]
+    min_neg_ret = returns.loc[min_idx]
+
+    print(f"  Total signals:           {len(group_df)}")
+    print(f"  Min return:              {min_ret * 100:+.2f}%")
+    print(f"  Max return:              {max_ret * 100:+.2f}%")
+    print(f"  Median return:           {median_ret * 100:+.2f}%")
+    print(f"  Positive (> +0.5%):      {positive_count}")
+    print(f"  Negative (< -0.5%):      {negative_count}")
+    print(f"  Flat (|r| <= 0.5%):      {flat_count}")
+    print(f"  Largest positive:        {max_pos_ret * 100:+.2f}%  on {max_pos_date.strftime('%Y-%m-%d')}")
+    print(f"  Largest negative:        {min_neg_ret * 100:+.2f}%  on {min_neg_date.strftime('%Y-%m-%d')}")
+    print()
+
+
 def main():
     # Read OHLC data
     candles = read_ohlc(CSV_FILE)
@@ -132,6 +184,9 @@ def main():
         print("  No Bullish signals with a valid 3-day forward window.")
     print()
 
+    # ---------------- Bullish return distribution ----------------
+    print_return_distribution(bullish, "Bullish")
+
     # ---------------- Bearish performance (for context) ----------------
     print("=" * 60)
     print("BEARISH SIGNAL PERFORMANCE (next 3 days)")
@@ -155,6 +210,9 @@ def main():
     else:
         print("  No Bearish signals with a valid 3-day forward window.")
     print()
+
+    # ---------------- Bearish return distribution ----------------
+    print_return_distribution(bearish, "Bearish")
 
     # ---------------- Baseline ----------------
     print("=" * 60)
