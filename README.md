@@ -321,6 +321,7 @@ backtest_full.py               Full combined-signal backtest (2-year window)
 data_utils.py                  Shared merged dataset + features (NEW, Step 5)
 backtest_variants.py           5 rule-based strategies (NEW, Step 6)
 model_walkforward.py           Expanding-window logistic model (NEW, Step 7)
+| stress_test_rules.py            Cost + robustness + significance stress test of R2/R5 (NEW)
 index.html                     Live dashboard / JS signal combiner
 requirements.txt               Python dependencies (+ scikit-learn, matplotlib)
 README.md                      This file
@@ -331,4 +332,108 @@ README.md                      This file
 `.json` snapshot files (`fundamentals.json`, `sentiment.json`, `hammers.json`)
 are produced by the live snapshot tools; the new `_history.csv` files feed the
 historical backtest.
+
+## Stress test: do the trend rules R2/R5 survive costs and beat a baseline?
+
+`stress_test_rules.py` re-runs R2 and R5 from `backtest_variants.py` **with
+transaction costs** (0.1% fee + 0.05% slippage per side = 0.30% round-trip on
+every entry/exit), adds simple moving-average baselines (long when
+`close > MA`), and runs four robustness/significance checks. Rule parameters are
+**fixed** by the Step-6 definitions (R2 = close > MA(90) & 7-day momentum > 0;
+R5 = close > MA(30) & 7-day momentum > 0 & sentiment > 0). The MA-length /
+momentum-window sweep is run on the **analysis** window only; the hold-out is
+touched only for reporting (Task 1) and a single final run of the chosen rule.
+
+Run it with `python stress_test_rules.py` (analysis-window evidence only).
+
+### Tasks 1-2 - cost-adjusted performance vs buy & hold (0.15% per side)
+
+ANALYSIS window (2018-02-02 -> 2025-01-27, 2552 days):
+
+| rule       | total % | ann %  | Sharpe | max DD % | win % | trades |
+|------------|---------|--------|--------|----------|-------|--------|
+| Buy & Hold | 1006.65 | 41.03  | 0.853  | -76.63   | 51.3  | 0      |
+| R2         | 738.66  | 35.55  | 0.991  | -50.20   | 18.0  | 139    |
+| R5         | 581.37  | 31.58  | 0.957  | -44.11   | 14.3  | 126    |
+| MA200-long | 1182.45 | 44.04  | 1.034  | -64.38   | 27.6  | 22     |
+| MA100-long | 2448.85 | 58.91  | 1.246  | -38.80   | 28.3  | 41     |
+
+HOLD-OUT window (2025-01-28 -> 2026-10-28, 639 days):
+
+| rule       | total % | ann %  | Sharpe | max DD % | win % | trades |
+|------------|---------|--------|--------|----------|-------|--------|
+| Buy & Hold | -21.17  | -12.71 | -0.102 | -52.97   | 49.1  | 0      |
+| R2         | -1.64   | -0.94  | 0.034  | -18.54   | 13.0  | 27     |
+| R5         | -6.70   | -3.88  | -0.184 | -17.23   | 9.1   | 20     |
+| MA200-long | -1.59   | -0.91  | 0.037  | -19.95   | 11.3  | 5      |
+| MA100-long | +10.46  | +5.85  | 0.369  | -24.89   | 19.7  | 9      |
+
+R2/R5 beat buy-and-hold on Sharpe (0.99 / 0.96 vs 0.85) with roughly half the
+drawdown, but mostly by sitting in cash through the 2018 and 2022 crashes - a
+volatility-screen effect, not trend-following alpha. **They do not clearly beat
+the trivial `close > MA(100)` baseline**, which dominates on both windows
+(analysis Sharpe 1.246; hold-out +5.85% annualized).
+
+### 3 - R2 parameter robustness (analysis window, Sharpe with costs)
+
+|        | mom5  | mom7  | mom10 | mom14 |
+|--------|-------|-------|-------|-------|
+| MA50   | 0.974 | 1.141 | 1.200 | 1.276 |
+| MA90   | 0.881 | 0.991 | 1.069 | 1.283 |
+| MA150  | 0.967 | 1.053 | 1.044 | 1.404 |
+| MA200  | 0.878 | 0.896 | 0.971 | 1.322 |
+
+Grid mean 1.084; the default (MA90, mom7) = 0.991 is mid-pack. Sharpe rises
+**monotonically** with the momentum lookback (mom5 = 0.93 -> mom14 = 1.32), so the
+rule is **parameter-sensitive** rather than a robust plateau.
+
+### 4 - bootstrap significance (block bootstrap, B=1000, 20-day blocks, analysis)
+
+| rule        | mean Sharpe(diff vs BH) | 95% CI        | p(diff<=0) | verdict  |
+|-------------|-------------------------|---------------|------------|----------|
+| R2          | +0.127                  | [-0.49, +0.77] | 0.33     | NOT-sig  |
+| R5          | +0.074                  | [-0.62, +0.76] | 0.41     | NOT-sig  |
+| MA200-long  | +0.165                  | [-0.49, +0.79] | 0.29     | NOT-sig  |
+| MA100-long  | +0.363                  | [-0.22, +0.95] | 0.10     | NOT-sig  |
+
+Every 95% CI crosses zero: **no rule's Sharpe edge over buy-and-hold is
+statistically significant** (even MA100-long is only ~significant at the 10% level).
+
+### 5 - per-year (2018-2026, descriptive, full history, with costs)
+
+| year | BH ret % | BH mdd % | R2 ret % | R2 mdd % | MA100 ret % | MA100 mdd % |
+|------|----------|----------|----------|----------|-------------|-------------|
+| 2018 | -59.86   | -72.11   | -7.98    | -13.61   | -9.02       | -16.23      |
+| 2019 | +94.31   | -49.41   | +118.47  | -29.18   | +133.12     | -28.54      |
+| 2020 | +301.98  | -53.60   | +84.83   | -29.89   | +166.23     | -25.29      |
+| 2021 | +59.79   | -53.14   | +54.26   | -33.33   | +76.80      | -36.16      |
+| 2022 | -64.21   | -66.93   | -25.30   | -28.06   | -21.13      | -29.45      |
+| 2023 | +155.61  | -20.00   | +50.29   | -24.21   | +81.48      | -27.02      |
+| 2024 | +121.31  | -26.15   | +35.06   | -29.12   | +63.50      | -36.68      |
+| 2025 | -6.33    | -32.02   | -1.27    | -13.08   | +3.82       | -18.28      |
+| 2026 | -8.19    | -39.53   | -5.19    | -12.47   | +6.52       | -13.27      |
+
+R2/R5 act as tail-risk screens in the 2018/2022/2025/2026 drawdown years, but
+underperform big bull markets (2019/2020/2021) where they sit in cash.
+
+### 6 - pick + final hold-out run
+
+Picked **R2** (the stronger of the two trend rules: analysis Sharpe 0.991 vs
+R5 0.957, lower max drawdown). Final hold-out run (639 days): **R2 = -0.94%
+annual (Sharpe 0.034), max DD -18.5%, 27 trades, vs Buy & Hold -12.71%
+(Sharpe -0.102)** - R2 preserved capital against a crashing buy-and-hold but did
+not finish in the black.
+
+### Honest verdict (R2/R5)
+
+**No statistically significant edge.** With realistic costs the trend rules
+R2/R5 do beat buy-and-hold on Sharpe and drawdown (mostly as a volatility filter
+that hides in cash during crashes), but (a) they do **not** beat the trivial
+`close > MA(100)` baseline on either window, (b) R2 is parameter-sensitive rather
+than a robust plateau, (c) the Sharpe edge vs buy-and-hold is not
+bootstrap-significant, and (d) they underperform the big bull years. Because a
+simple moving-average rule already dominates, there is no justification to deploy
+the momentum/combination rules for return; use MA(100) long, or treat R2 as a
+defensive tail-risk screen, not an edge.
+
 
