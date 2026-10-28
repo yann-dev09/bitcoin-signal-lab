@@ -101,11 +101,11 @@ def load_dataframe():
     return df, fng_map
 
 
-def existing_log():
-    """Read paper_log.csv (strings, no rewrite of past rows). Empty DF if absent."""
-    if not os.path.exists(PAPER_LOG):
+def existing_log(log_path=PAPER_LOG):
+    """Read the ledger (strings, no rewrite of past rows). Empty DF if absent."""
+    if not os.path.exists(log_path):
         return pd.DataFrame(columns=LOG_COLUMNS)
-    log = pd.read_csv(PAPER_LOG, dtype={"date": str})
+    log = pd.read_csv(log_path, dtype={"date": str})
     if log.empty:
         return pd.DataFrame(columns=LOG_COLUMNS)
     return log.drop_duplicates(subset=["date"], keep="last").sort_values("date")
@@ -117,10 +117,10 @@ def _sig(sigcol, d_str, df):
     return 0 if pd.isna(v) else int(v)
 
 
-def run(dry_run=False, no_refresh=False):
-    today = pd.Timestamp(today_utc())
+def run(dry_run=False, no_refresh=False, log_path=PAPER_LOG, today=None):
+    today = pd.Timestamp(today) if today else pd.Timestamp(today_utc())
     print(f"paper_trade run @ {datetime.now(timezone.utc).isoformat()}Z "
-          f"| today(utc)={today.date()}")
+          f"| today(utc)={today.date()} | log={os.path.basename(log_path)}")
     if not no_refresh:
         refresh_data()
     df, fng_map = load_dataframe()
@@ -133,7 +133,7 @@ def run(dry_run=False, no_refresh=False):
         return
     last_closed = closed[mask].max()
 
-    log = existing_log()
+    log = existing_log(log_path)
     if log.empty:
         start = last_closed
         eq_ma100 = eq_r2 = eq_bh = START_CAPITAL
@@ -183,8 +183,10 @@ def run(dry_run=False, no_refresh=False):
             return eq, entries
 
         eq_ma100, em = evolve(h_m100, p_m100, eq_ma100)
+        eq_ma100 = round(eq_ma100, 2)          # daily cadence: round on disk each day
         eq_r2, er = evolve(h_r2, p_r2, eq_r2)
-        eq_bh = eq_bh * (1.0 + float(ret))           # buy & hold: long, no cost
+        eq_r2 = round(eq_r2, 2)
+        eq_bh = round(eq_bh * (1.0 + float(ret)), 2)   # buy & hold: long, no cost
         tr_ma100 += em
         tr_r2 += er
         first_run = False
@@ -214,8 +216,8 @@ def run(dry_run=False, no_refresh=False):
             print(f"[dry-run] would append {len(new_rows)} row(s):\n")
             print(out.tail(len(new_rows)).to_string(index=False))
         else:
-            out.to_csv(PAPER_LOG, index=False)
-            print(f"Appended {len(new_rows)} row(s) to {PAPER_LOG} "
+            out.to_csv(log_path, index=False)
+            print(f"Appended {len(new_rows)} row(s) to {log_path} "
                   f"(last closed logged: {out['date'].iloc[-1]})")
     else:
         print("No new closed candles to log.")
@@ -225,11 +227,17 @@ def main():
     p = argparse.ArgumentParser(
         description="Daily BTC paper-trader: MA100 live rule + R2/BH counterfactuals.")
     p.add_argument("--dry-run", action="store_true",
-                   help="preview what would be logged without writing paper_log.csv")
+                   help="preview what would be logged without writing the ledger")
     p.add_argument("--no-refresh", action="store_true",
                    help="skip BTC/FNG refresh and use the on-disk CSVs")
+    p.add_argument("--log", default=PAPER_LOG,
+                   help="ledger path (default: paper_log.csv; use a COPY for backfill tests)")
+    p.add_argument("--today", default=None,
+                   help="override 'today' UTC date YYYY-MM-DD (TEST ONLY: simulates a later run"
+                        " date so the backfill path can be exercised against on-disk data)")
     args = p.parse_args()
-    run(dry_run=args.dry_run, no_refresh=args.no_refresh)
+    run(dry_run=args.dry_run, no_refresh=args.no_refresh,
+        log_path=args.log, today=args.today)
 
 
 if __name__ == "__main__":

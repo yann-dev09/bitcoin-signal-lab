@@ -468,31 +468,29 @@ A re-run on the same day is a no-op ("Up to date ... already logged").
 ### Automate it daily with Windows Task Scheduler
 
 1. Folder = `C:\Users\USER\Desktop\Crypto-predictor1`.
-2. Create `C:\tasks\run_paper_trade.bat`:
+2. Create `C:\tasks\run_paper_trade.bat` (uses the full interpreter path; do not
+   use the `WindowsApps\python.exe` Store stub, which can prompt to install):
    ```bat
    @echo off
-   cd /d "C:\Users\USER\Desktop\Crypto-predictor1"
-   python paper_trade.py >> "C:\tasks\paper_trade.log" 2>&1
+   set "PYTHON=C:\Users\USER\AppData\Local\Programs\Python\Python314\python.exe"
+   set "SCRIPT=C:\Users\USER\Desktop\Crypto-predictor1\paper_trade.py"
+   set "LOG=C:\tasks\paper_trade.log"
+   echo [%DATE% %TIME%] paper_trade run >> "%LOG%"
+   "%PYTHON%" -u -B "%SCRIPT%" >> "%LOG%" 2>&1
+   if errorlevel 1 echo [%DATE% %TIME%] [ERROR] paper_trade exited code %errorlevel% >> "%LOG%"
    ```
 3. Open **Task Scheduler** -> *Create Task*.
-4. **General**: Name = `BTC paper-trade`; tick *Run whether user is logged on or
-   not* and *Run with highest privileges*.
-5. **Triggers** -> *New* -> Daily, repeat every 1 day, Start = **00:10 UTC**.
-   (A Binance 1d candle for date D closes at 00:00 UTC, so 00:10 UTC logs the
-   previous day's closed candle with no lookahead. Convert to your local time,
-   e.g. 05:10 for UTC+5.)
-6. **Actions** -> *New* -> Action = *Start a program*, Program/script =
+4. **General**: Name = `BTC paper-trade`; choose *Run only when user is logged on*.
+5. **Triggers** -> *New* -> Daily, Start = **20:00 local time** (ticked *Enabled*).
+   A Binance 1d candle for date D closes at 00:00 UTC, so a 20:00 local trigger
+   is always well past the close -> it logs the previous closed candle (no
+   lookahead) and has a ~20h buffer on every time zone.
+6. **Settings**: tick *Run task as soon as possible after a scheduled start is
+   missed* (the same checkbox also appears under the Trigger's *Advanced settings*).
+7. **Actions** -> *New* -> Action = *Start a program*, Program/script =
    `C:\tasks\run_paper_trade.bat`.
-7. **Conditions**: un-tick *Start the task only if the computer is on AC power*
+8. **Conditions**: un-tick *Start the task only if the computer is on AC power*
    if you want it to run on battery.
-8. **OK** (you'll be asked for your Windows password).
-9. Verify: right-click the task -> *Run*, then open `C:\tasks\paper_trade.log`
-   and `python paper_report.py`.
-
-### Evaluation
-`RULES_FROZEN.md` fixes the rules; **evaluation date = first logged date + 90
-days**. `paper_report.py` prints the start date, last logged date, and the
-evaluation date each time it runs.
-
-
-
+9. **OK**.
+10. Verify: right-click the task -> *Run*, then open `C:\tasks\paper_trade.log`
+    and run `python paper_report.py` (or the full interpreter path above).
