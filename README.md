@@ -322,6 +322,10 @@ data_utils.py                  Shared merged dataset + features (NEW, Step 5)
 backtest_variants.py           5 rule-based strategies (NEW, Step 6)
 model_walkforward.py           Expanding-window logistic model (NEW, Step 7)
 | stress_test_rules.py            Cost + robustness + significance stress test of R2/R5 (NEW)
+| paper_trade.py                  Daily forward paper-trading logger (MA100 live; R2 & BH counterfactuals) (NEW)
+| paper_report.py                 Performance report over paper_log.csv (NEW)
+| RULES_FROZEN.md                 Frozen paper-trading rule parameters + 90-day evaluation note (NEW)
+| paper_log.csv                   Paper-trading ledger (one row per closed day) (NEW)
 index.html                     Live dashboard / JS signal combiner
 requirements.txt               Python dependencies (+ scikit-learn, matplotlib)
 README.md                      This file
@@ -435,5 +439,60 @@ bootstrap-significant, and (d) they underperform the big bull years. Because a
 simple moving-average rule already dominates, there is no justification to deploy
 the momentum/combination rules for return; use MA(100) long, or treat R2 as a
 defensive tail-risk screen, not an edge.
+
+## Paper-trading (daily, forward-only)
+
+`paper_trade.py` + `paper_report.py` run a live **forward paper-trade** of the
+recommended rule (MA100 long) from `RULES_FROZEN.md`, with R2 and buy-and-hold
+tracked as paper counterfactuals. No exchange API, no real money, no order
+placement - it appends one row per closed daily candle to `paper_log.csv`. This
+is a fresh forward test (does **not** use the stress-test hold-out).
+
+Columns: `date, close, ma100, signal_ma100, signal_r2, position, fng, rsi_14,
+paper_equity_ma100, paper_equity_r2, paper_equity_buyhold, trades_ma100,
+trades_r2`. `position` = next-day target for the live MA100 rule (1=long/0=cash);
+the `paper_equity_*` columns are the portfolio value at the close of `date`
+(position held = signal of the prior day, no lookahead). `fng`/`rsi_14` are
+informational. Each strategy starts at $1000; 0.15% per side on each
+entry/exit.
+
+```bat
+python paper_trade.py            :: refresh data, log the last closed candle
+python paper_trade.py --dry-run  :: preview without writing paper_log.csv
+python paper_trade.py --no-refresh :: skip data refresh (offline re-runs)
+python paper_report.py           :: equity / drawdown / trades vs buy & hold
+```
+
+A re-run on the same day is a no-op ("Up to date ... already logged").
+
+### Automate it daily with Windows Task Scheduler
+
+1. Folder = `C:\Users\USER\Desktop\Crypto-predictor1`.
+2. Create `C:\tasks\run_paper_trade.bat`:
+   ```bat
+   @echo off
+   cd /d "C:\Users\USER\Desktop\Crypto-predictor1"
+   python paper_trade.py >> "C:\tasks\paper_trade.log" 2>&1
+   ```
+3. Open **Task Scheduler** -> *Create Task*.
+4. **General**: Name = `BTC paper-trade`; tick *Run whether user is logged on or
+   not* and *Run with highest privileges*.
+5. **Triggers** -> *New* -> Daily, repeat every 1 day, Start = **00:10 UTC**.
+   (A Binance 1d candle for date D closes at 00:00 UTC, so 00:10 UTC logs the
+   previous day's closed candle with no lookahead. Convert to your local time,
+   e.g. 05:10 for UTC+5.)
+6. **Actions** -> *New* -> Action = *Start a program*, Program/script =
+   `C:\tasks\run_paper_trade.bat`.
+7. **Conditions**: un-tick *Start the task only if the computer is on AC power*
+   if you want it to run on battery.
+8. **OK** (you'll be asked for your Windows password).
+9. Verify: right-click the task -> *Run*, then open `C:\tasks\paper_trade.log`
+   and `python paper_report.py`.
+
+### Evaluation
+`RULES_FROZEN.md` fixes the rules; **evaluation date = first logged date + 90
+days**. `paper_report.py` prints the start date, last logged date, and the
+evaluation date each time it runs.
+
 
 
