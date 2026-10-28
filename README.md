@@ -6,13 +6,18 @@ transaction count), and market sentiment.
 
 ## Pipeline overview
 
-| Step | Script                          | Output CSV / artifact       | Description |
-|------|---------------------------------|-----------------------------|-------------|
-| 0    | `fetch_btc_data.py`             | `btc_data.csv`              | Daily BTC OHLC (Binance, up to 730 days) |
-| 1    | `fetch_fundamentals_history.py` | `fundamentals_history.csv`  | 2-year on-chain history (Blockchain.com) |
-| 2    | `fetch_sentiment_history.py`    | `fng_history.csv`           | Full Fear & Greed Index history (proxy) |
-| 3    | `signal_combiner.py` + `test_signal_combiner.py` | —   | Combined signal logic + unit tests |
-| 4    | `backtest_full.py`              | (printed report)            | Full historical backtest with stats |
+| Step | Script                                   | Output / artifact          | Description |
+|------|------------------------------------------|----------------------------|-------------|
+| 0    | `fetch_btc_data.py`                      | `btc_data.csv`             | Daily BTC OHLC (Binance, up to 730 days) |
+| 0b   | `fetch_btc_data.py --full`               | `btc_data_full.csv`        | Full daily BTC OHLC (2018-02-01 -> today, paginated) |
+| 1    | `fetch_fundamentals_history.py`          | `fundamentals_history.csv` | On-chain history (Blockchain.com `timespan=all`, cut to 2018-02-01) |
+| 2    | `fetch_sentiment_history.py`             | `fng_history.csv`          | Full Fear & Greed Index history (proxy) |
+| ~    | `verify_data.py`                         | (printed report)           | Verify ranges / row counts / missing days for all 3 CSVs |
+| 3    | `signal_combiner.py` + `test_signal_combiner.py` | —                    | Combined signal logic + unit tests |
+| 4    | `backtest_full.py`                       | (printed report)           | Full combined-signal backtest (2-year window) |
+| 5    | `data_utils.py`                          | —                          | Shared merged dataset + feature engineering (2018-2026) |
+| 6    | `backtest_variants.py`                   | (printed report)           | 5 rule-based strategies, analysis + hold-out 80/20 |
+| 7    | `model_walkforward.py`                   | `model_walkforward_predictions.csv`, `walkforward_equity.png` | Expanding-window logistic regression (analysis + hold-out) |
 
 ### Running the pipeline
 
@@ -36,6 +41,35 @@ python test_signal_combiner.py              # -> 10 passed
 python backtest_full.py
 ```
 
+### Multi-year analysis (2018-2026)
+
+The extended pipeline evaluates on the full **2018-02-01 -> today** window using a
+date-based 80/20 split: the first 80% of days is the *analysis* window
+(threshold / model selection + walk-forward reporting) and the last 20% is the
+*hold-out* window, which is touched **only once**, in a single final forward run.
+
+```bash
+# 1. Fetch the full daily BTC OHLC history (2018 -> today, paginated)
+python fetch_btc_data.py --full               # -> btc_data_full.csv
+
+# 2. Refresh on-chain + sentiment histories (cut to 2018-02-01)
+python fetch_fundamentals_history.py          # -> fundamentals_history.csv
+python fetch_sentiment_history.py             # -> fng_history.csv
+
+# 3. Verify data integrity (ranges, counts, missing days)
+python verify_data.py
+
+# 4. Five rule-based strategies - analysis window (first 80%)
+python backtest_variants.py
+
+# 5. Expanding-window logistic model - analysis window (first 80%)
+python model_walkforward.py
+
+# 6. FINAL STEP - single forward report on the hold-out window (last 20%)
+python backtest_variants.py --holdout
+python model_walkforward.py --holdout
+```
+
 > The original live/snapshot tools are unchanged: `sentiment.py` +
 > `fetch_news.py` (CoinDesk RSS + VADER), `fetch_fundamentals.py`
 > (30-day Blockchain.com snapshot), `detect_hammer.py`, `analyze.py`,
@@ -45,18 +79,30 @@ python backtest_full.py
 
 ### `fetch_btc_data.py`
 Fetches daily BTC/USD OHLC. Uses CoinGecko for the last 90 days and Binance
-klines for longer ranges (up to 730 days). Saves `btc_data.csv`
+klines for longer ranges. Saves `btc_data.csv`
 (columns: `date, open, high, low, close`).
 
+`--full` paginates Binance klines in 1000-candle chunks (with `startTime`)
+starting 2018-02-01 through the latest available day and writes
+`btc_data_full.csv` — the master daily calendar for the multi-year pipeline
+(3192 consecutive daily rows, no gaps).
+
 ### `fetch_fundamentals_history.py`  *(Step 1)*
-Downloads two Blockchain.com **charts** series with `timespan=2years&format=json`:
+Downloads two Blockchain.com **charts** series with `timespan=all&format=json`
+(the longest range Blockchain.com offers, 2009 -> today) and cuts the merged
+result to **2018-02-01 onward** so every data file shares the same analysis
+window:
 * `n-unique-addresses` -> `unique_addresses`
 * `n-transactions` -> `transactions`
 
-Both are daily series merged by date (inner join on the dates that appear in
-**both** series) and written to `fundamentals_history.csv`
-(columns: `date, unique_addresses, transactions`). It prints the date range and
-row count.
+Note on granularity: `timespan=all` is auto-coarsened by Blockchain.com to
+~4-day sampling across the full span (the two metrics land on slightly offset
+4-day grids). The script therefore merges by the **union** of dates, with each
+metric forward-filled onto the union grid (a plain inner join would discard
+most samples). Written to `fundamentals_history.csv` (columns:
+`date, unique_addresses, transactions`); `data_utils.py` later forward-fills
+this onto the daily BTC calendar. Missing calendar days are reported at the end
+of the run.
 
 ### `fetch_sentiment_history.py`  *(Step 2)*
 Downloads the **full** Fear & Greed Index history from
@@ -155,22 +201,128 @@ meaningful edge, thresholds would need to be relaxed (e.g. decouple the
 sentiment requirement, or lower the hammer rarity) -- left as a future task.
 The pipeline and honest numbers are reproducible via `python backtest_full.py`.
 
+## Results summary (multi-year 80/20, 2018-02-01 -> 2026-10-28)
+
+### Step 1 - data (`verify_data.py`)
+* BTC daily: **3192 rows, 2018-02-01 -> 2026-10-28, 0 missing days**.
+* FNG daily: **3188 rows** (4 calendar gaps, forward-filled).
+* On-chain: **1389 rows at ~4-day sampling** (union-forward-filled to daily
+  inside `data_utils.py`). The 4-day on-chain cadence is consumed only by the
+  Step 7 model; none of the Step 6 rules use on-chain data.
+
+### Step 6 - five rule-based strategies (analysis window, 2476 days)
+Buy & Hold baseline: **+943% / +41.3% annual / Sharpe 0.86**.
+
+| Rule | Long days | Total return | Annual return | Sharpe | 7-day win rate |
+|------|-----------|--------------|---------------|--------|----------------|
+| R2: Mom7>0 & price>MA90 | 18.9% | +1155% | +45.2% | **1.16** | 52.7% |
+| R5: price>MA30 & Mom7>0 & sent>0 | 14.9% | +962% | +41.7% | **1.16** | 54.8% |
+| R1: Mom30>2.5% & VOL30<50% | 8.6% | +213% | +18.3% | 0.86 | 56.7% |
+| R3: Mom30>5% & RSI14<70 | 14.5% | +172% | +15.9% | 0.61 | 56.3% |
+| R4: Onchain>0 & sentiment>0 | 12.1% | +115% | +12.0% | 0.53 | 54.7% |
+
+Two momentum rules (R2, R5) beat buy-and-hold on a risk-adjusted basis
+(Sharpe 1.16 vs 0.86) with ~80-85% less market exposure. The on-chain+sentiment
+rule (R4) underperforms, so on-chain metrics do not add value with this signal
+definition.
+
+### Step 7 - logistic regression walk-forward (analysis window, 2392 scored days)
+* AUC: **0.455** (no-skill baseline ~0.50). In-sample AUC is 0.545 - the slight
+  in-sample signal does **not** generalize in the expanding walk-forward, i.e.
+  next-7-day BTC direction is not predictable from this feature set
+  (consistent with weak-form market efficiency over 2018-2026).
+* F1-optimal threshold (0.10) -> strategy ~= buy-and-hold (+46.9% annual,
+  Sharpe 0.92): the model only adds value by reducing exposure, not by
+  timing the market.
+* Strategy at the natural 0.50 threshold loses money (-14.0% annual, Sharpe
+  -0.01, 31.6% win rate): the model's "confident up" calls are
+  anti-correlated, further confirming no edge.
+* Top standardized coefficients (standardized features): RSI14 +0.25,
+  momentum_30 +0.18, ma_ratio_30_90 +0.10; negatives on momentum_7 -0.11
+  and returns_1d -0.08 (short-horizon reversals).
+
+### Hold-out (final, touch-once)
+Run `python backtest_variants.py --holdout` and
+`python model_walkforward.py --holdout` for the single forward report on the
+last 20% of days (2025-02-15 -> 2026-10-28). The threshold is the one selected
+on the analysis window and is **not** re-tuned on the hold-out.
+
+**Overall conclusion:** the pipeline is correct, leak-free, and fully
+reproducible from `fetch_*_history.py` -> `verify_data.py` -> the analysis and
+hold-out scripts. The two momentum rules (R2/R5) offer the only
+risk-adjusted edge; the logistic model does not beat a random baseline on
+next-7-day direction over this window.
+
+### `verify_data.py`  *(Step 1)*
+Loads the three CSVs and prints, for each, the date range, row count, and number
+of missing calendar days within the 2018-02-01 onward window. Run it after
+fetching to sanity-check that the three series are aligned and complete.
+
+### `data_utils.py`  *(Step 5)*
+The shared data layer. `load_merged_dataset()` builds one daily DataFrame by
+taking `btc_data_full.csv` as the master calendar and reindexing FNG and on-chain
+metrics onto it with forward-fill (no lookahead: each day inherits the most
+recent past observation). It then engineers leak-free features using only
+same-day/prior data:
+
+* `returns_1d`, `ma_7`/`ma_30`/`ma_90`, MA cross-ratios (`ma_ratio_7_30` etc.),
+* 14-day Wilder RSI, 30-day annualized volatility, 7-day & 30-day momentum,
+* forward-filled `sentiment_score`, `unique_addresses`, `transactions`,
+* 7-day on-chain changes (`addr_7d`, `tx_7d`).
+
+The prediction target is the sign of the next-7-day return
+(`future_return_7d = close[t+7]/close[t] - 1 > 0 -> target_7d = 1`).
+`split_dataset()` splits by date 80/20 (analysis / hold-out).
+
+### `backtest_variants.py`  *(Step 6)*
+Five simple rule-based long-only strategies, each evaluated next-day
+(signal on day t -> position on day t+1, no lookahead). The five rules:
+
+* R1: 30-day momentum > 2.5% AND 30-day volatility < 50%
+* R2: 7-day momentum > 0 AND price above 90-day MA
+* R3: 30-day momentum > 5% AND 14-day RSI < 70 (not overbought)
+* R4: 7-day on-chain activity rising AND sentiment > 0
+* R5: price above 30-day MA AND 7-day momentum > 0 AND sentiment > 0
+
+For each rule it reports long/flat days, 7-day forward-return stats (avg
+return, win rate, precision of "long" calls), and daily-position strategy
+stats (total/annualized return, Sharpe, win rate) vs buy & hold.
+
+### `model_walkforward.py`  *(Step 7)*
+An expanding-window logistic regression predicting `target_7d`. It is retrained
+every 30 days on all data strictly before day t (expanding window, no lookahead)
+and predicts daily in between. The probability threshold that maximizes F1
+**on the analysis window** is selected there and reused unchanged on the
+hold-out. Per window it reports AUC (threshold-independent), classification
+metrics at the threshold, and the long-only strategy metrics (at the F1
+threshold and at 0.50) vs buy & hold. Per-day predictions are written to
+`model_walkforward_predictions.csv` and an equity curve to
+`walkforward_equity.png`.
+
+> Retraining every 30 days (rather than every day) keeps the expanding refit
+> from becoming O(n^2); 30 days of history between fits is stable for this
+> standardized feature set.
+
 ## Files
 
 ```
-fetch_btc_data.py              BTC OHLC fetcher (CoinGecko/Binance)
+fetch_btc_data.py              BTC OHLC fetcher (+ --full pagination -> btc_data_full.csv)
 fetch_fundamentals.py          30-day on-chain snapshot (live tool, unchanged)
-fetch_fundamentals_history.py  2-year on-chain history (NEW, Step 1)
-fetch_sentiment_history.py     Full Fear & Greed history (NEW, Step 2)
+fetch_fundamentals_history.py  On-chain history (Blockchain.com timespan=all, cut to 2018-02-01)
+fetch_sentiment_history.py     Full Fear & Greed history
+verify_data.py                 Data integrity check (NEW, Step 1)
 sentiment.py / fetch_news.py   VADER headline sentiment (live tool, unchanged)
 detect_hammer.py               Hammer candlestick detector
 analyze.py                     RSI(14) + SMA analysis
 signal_combiner.py             Combined signal logic (NEW, Step 3)
 test_signal_combiner.py        Unit tests for the combiner (NEW, Step 3)
 backtest.py                    Technical-only (RSI + hammer) backtest (unchanged)
-backtest_full.py               FULL combined-signal backtest (NEW, Step 4)
+backtest_full.py               Full combined-signal backtest (2-year window)
+data_utils.py                  Shared merged dataset + features (NEW, Step 5)
+backtest_variants.py           5 rule-based strategies (NEW, Step 6)
+model_walkforward.py           Expanding-window logistic model (NEW, Step 7)
 index.html                     Live dashboard / JS signal combiner
-requirements.txt               Python dependencies (NEW, Step 5)
+requirements.txt               Python dependencies (+ scikit-learn, matplotlib)
 README.md                      This file
 ```
 
