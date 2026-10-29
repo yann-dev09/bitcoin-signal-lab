@@ -329,6 +329,9 @@
             vertical-align: middle;
         }
 
+        .stale-badge { color: #f7931a; font-weight: 700; font-size: 11px; text-transform: uppercase; }
+        .as-of { color: #787b86; font-size: 12px; }
+
         /* ---------- Signal banner ---------- */
         .signal-banner {
             margin: 12px 24px 0;
@@ -460,6 +463,7 @@
                 <div class="overall-score">
                     <span>Overall average:</span>
                     <span class="score-value neutral" id="overall-score">—</span>
+                    <span class="as-of" id="sentiment-as-of"></span>
                 </div>
             </div>
             <div class="sentiment-list" id="sentiment-list">
@@ -469,8 +473,8 @@
     </div>
 
     <footer>
-        Data: <code>btc_data.csv</code> &nbsp;|&nbsp; Patterns: <code>hammers.json</code> &nbsp;|&nbsp; Sentiment: <code>sentiment.json</code> &nbsp;|&nbsp; Fundamentals: <code>fundamentals.json</code> &nbsp;|&nbsp; Paper log: <code>paper_log.csv</code> &nbsp;|&nbsp;
-        Run <code>python detect_hammer.py</code>, <code>python sentiment.py</code>, and <code>python fetch_fundamentals.py</code> to regenerate data.
+        Data: <code>btc_data_full.csv</code> (last 730 days, daily refreshed) &nbsp;|&nbsp; Sentiment: <code>sentiment.json</code> &nbsp;|&nbsp; Fundamentals: <code>fundamentals.json</code> &nbsp;|&nbsp; Paper log: <code>paper_log.csv</code> &nbsp;|&nbsp;
+        Hammer patterns are detected in-page (rule from <code>detect_hammer.py</code>). Sentiment &amp; on-chain data are <strong>not</strong> refreshed daily &mdash; shown with an "as-of" date and an orange <span style="color:#f7931a">STALE</span> badge when older than 3 days.
     </footer>
 
     <!-- lightweight-charts via CDN (no npm needed) -->
@@ -531,15 +535,21 @@
             return rows;
         }
 
+        // ---------- Hammer detection (same rule as detect_hammer.py) ----------
+        function isHammer(c) {
+            const body = Math.abs(c.close - c.open);
+            const totalRange = c.high - c.low;
+            if (totalRange === 0 || body === 0) return false;
+            const upperWick = c.high - Math.max(c.open, c.close);
+            const lowerWick = Math.min(c.open, c.close) - c.low;
+            return (body <= totalRange / 3) && (lowerWick >= 2 * body) && (upperWick <= body / 3);
+        }
+
         // ---------- Load data ----------
         async function loadData() {
-            const [csvText, hammersText, sentimentText, fundamentalsText, paperLogText] = await Promise.all([
-                fetch('btc_data.csv').then(r => {
-                    if (!r.ok) throw new Error('Could not load btc_data.csv');
-                    return r.text();
-                }),
-                fetch('hammers.json').then(r => {
-                    if (!r.ok) throw new Error('Could not load hammers.json');
+            const [csvText, sentimentText, fundamentalsText, paperLogText] = await Promise.all([
+                fetch('btc_data_full.csv').then(r => {
+                    if (!r.ok) throw new Error('Could not load btc_data_full.csv');
                     return r.text();
                 }),
                 fetch('sentiment.json').then(r => {
@@ -558,7 +568,7 @@
             // Parse CSV
             const rows = parseCSV(csvText);
             if (rows.length < 2) {
-                throw new Error('btc_data.csv is empty or missing header');
+                throw new Error('btc_data_full.csv is empty or missing header');
             }
 
             const header = rows[0].map(h => h.trim().toLowerCase());
@@ -569,10 +579,10 @@
             const closeIdx = header.indexOf('close');
 
             if ([dateIdx, openIdx, highIdx, lowIdx, closeIdx].some(i => i === -1)) {
-                throw new Error('btc_data.csv must have columns: date,open,high,low,close');
+                throw new Error('btc_data_full.csv must have columns: date,open,high,low,close');
             }
 
-            const candles = rows.slice(1).map(r => ({
+            let candles = rows.slice(1).map(r => ({
                 time: r[dateIdx].trim(),
                 open: parseFloat(r[openIdx]),
                 high: parseFloat(r[highIdx]),
@@ -580,9 +590,11 @@
                 close: parseFloat(r[closeIdx])
             })).filter(c => !isNaN(c.open) && !isNaN(c.high) && !isNaN(c.low) && !isNaN(c.close));
 
-            // Parse hammers.json
-            const hammers = JSON.parse(hammersText);
-            const hammerDates = new Set(hammers.map(h => h.date));
+            // Keep only the most recent 730 days (btc_data_full.csv is chronological, newest last)
+            candles = candles.slice(-730);
+
+            // Detect hammers in-page using the same rule as detect_hammer.py
+            const hammerDates = new Set(candles.filter(isHammer).map(c => c.time));
 
             // Parse sentiment.json
             const sentiment = JSON.parse(sentimentText);
@@ -751,7 +763,15 @@
                 reason = 'No strong bullish confluence (RSI not oversold with positive sentiment, or no recent hammer)';
             }
 
-            return { signal, reason, rsi, hasRecentHammer, overall, addrChange, txChange };
+            // "as-of" dates for data that is NOT refreshed daily (sentiment & on-chain)
+            const sentimentDate = (sentiment && Array.isArray(sentiment.articles) && sentiment.articles.length)
+                ? sentiment.articles[0].date : null;
+            const addrDate = fundamentals && fundamentals.unique_addresses && fundamentals.unique_addresses.series && fundamentals.unique_addresses.series.length
+                ? fundamentals.unique_addresses.series[fundamentals.unique_addresses.series.length - 1].date : null;
+            const txDate = fundamentals && fundamentals.transactions_per_day && fundamentals.transactions_per_day.series && fundamentals.transactions_per_day.series.length
+                ? fundamentals.transactions_per_day.series[fundamentals.transactions_per_day.series.length - 1].date : null;
+
+            return { signal, reason, rsi, hasRecentHammer, overall, addrChange, txChange, sentimentDate, addrDate, txDate };
         }
 
         function renderSignal(signal) {
@@ -773,9 +793,9 @@
             metricsEl.innerHTML = `
                 <span>RSI(14): <strong>${rsiText}</strong></span>
                 <span>Recent hammer: <strong>${hammerText}</strong></span>
-                <span>Avg sentiment: <strong>${sentimentText}</strong></span>
-                <span>Addresses 7d: <strong>${addrText}</strong></span>
-                <span>Transactions 7d: <strong>${txText}</strong></span>
+                <span>Avg sentiment: <strong>${sentimentText}</strong> ${stalenessHtml(signal.sentimentDate)}</span>
+                <span>Addresses 7d: <strong>${addrText}</strong> ${stalenessHtml(signal.addrDate)}</span>
+                <span>Transactions 7d: <strong>${txText}</strong> ${stalenessHtml(signal.txDate)}</span>
             `;
         }
 
@@ -799,6 +819,8 @@
 
             scoreEl.textContent = `${overallLabel} (${overall >= 0 ? '+' : ''}${overall.toFixed(4)})`;
             scoreEl.className = `score-value ${overallClass}`;
+            const asOfEl = document.getElementById('sentiment-as-of');
+            if (asOfEl) asOfEl.innerHTML = stalenessHtml(sentiment.articles[0].date);
 
             if (sentiment.articles.length === 0) {
                 listEl.innerHTML = '<div class="sentiment-empty">No articles found.</div>';
@@ -876,19 +898,29 @@
             const contentEl = document.getElementById('paper-content');
             const data = parsePaperLog(text);
 
-            // < 2 rows -> friendly stub (requirement: no empty chart)
-            if (!data || data.length < 2) {
+            // 0 rows -> nothing to show yet (header stays at its default stub text)
+            if (!data || data.length === 0) {
                 emptyEl.style.display = 'block';
                 contentEl.style.display = 'none';
                 return;
             }
+
+            // >=1 row -> always surface the header meta (last logged date + position)
+            const last  = data[data.length - 1];
+            document.getElementById('paper-meta').textContent =
+                `Last logged: ${last.date} | Position: ${last.pos === 1 ? 'LONG' : 'CASH'}`;
+
+            // Not enough data for the chart/table yet
+            if (data.length < 2) {
+                emptyEl.style.display = 'block';
+                contentEl.style.display = 'none';
+                return;
+            }
+
             emptyEl.style.display = 'none';
             contentEl.style.display = 'block';
 
-            const last  = data[data.length - 1];
             const first = data[0];
-            document.getElementById('paper-meta').textContent =
-                `Last logged: ${last.date} | Position: ${last.pos === 1 ? 'LONG' : 'CASH'}`;
 
             // Equity line chart (MA100 live + R2 + buy & hold), all start from $1000
             const chart = LightweightCharts.createChart(document.getElementById('paper-chart'), {
@@ -928,6 +960,25 @@
                 : days === 0 ? `Evaluation day: ${evalStr}`
                 : `Evaluation passed (${evalStr})`;
             document.getElementById('paper-eval').textContent = `${line} (start + 90 days)`;
+        }
+
+        // ---------- Staleness helpers (sentiment.json / fundamentals.json are not refreshed daily) ----------
+        function ymdFrom(str) {
+            if (!str) return null;
+            const s = String(str);
+            const head = s.slice(0, 10);
+            return (head.length === 10 && head[4] === '-' && head[7] === '-') ? head : null;
+        }
+        function stalenessHtml(str) {
+            const when = ymdFrom(str);
+            if (!when) return '';
+            const parts = when.split('-');
+            const ms = Date.UTC(+parts[0], +parts[1] - 1, +parts[2]);
+            const days = Math.round((Date.now() - ms) / 86400000);
+            const stale = days > 3;
+            return stale
+                ? `<span class="stale-badge">STALE</span> <span class="as-of">(as of ${when})</span>`
+                : `<span class="as-of">(as of ${when})</span>`;
         }
 
         // ---------- Main ----------
