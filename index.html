@@ -265,6 +265,70 @@
             font-size: 13px;
         }
 
+        /* ---------- Paper trading panel ---------- */
+        .paper-trade-panel {
+            margin: 12px 24px 0;
+        }
+        .paper-trade-panel .paper-meta {
+            font-size: 13px;
+            color: #787b86;
+        }
+        .paper-note {
+            margin-top: 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #f7931a;
+        }
+        .panel-empty {
+            padding: 24px;
+            text-align: center;
+            color: #787b86;
+            font-size: 13px;
+        }
+        #paper-content { display: none; }
+        .paper-chart {
+            height: 220px;
+            width: 100%;
+        }
+        .paper-legend {
+            display: flex;
+            gap: 18px;
+            font-size: 12px;
+            color: #d1d4dc;
+            margin-top: 6px;
+        }
+        .paper-legend .item { display: inline-flex; align-items: center; gap: 6px; }
+        .paper-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+        .paper-table th, .paper-table td {
+            text-align: right;
+            padding: 6px 10px;
+            border-bottom: 1px solid #2a2e39;
+        }
+        .paper-table th { color: #787b86; font-weight: 600; }
+        .paper-table td:first-child, .paper-table th:first-child { text-align: left; }
+        .paper-eval {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #787b86;
+        }
+        .experimental-tag {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 2px 8px;
+            margin-left: 10px;
+            border-radius: 4px;
+            background: rgba(247,147,26,0.15);
+            color: #f7931a;
+            border: 1px solid rgba(247,147,26,0.5);
+            vertical-align: middle;
+        }
+
         /* ---------- Signal banner ---------- */
         .signal-banner {
             margin: 12px 24px 0;
@@ -353,9 +417,32 @@
         <span id="hammer-count">Hammers: —</span>
     </div>
 
+    <!-- Paper-trading section (forward-only) -- placed above the combined-signal card -->
+    <div class="sentiment-panel paper-trade-panel" id="paper-trade-panel">
+        <div class="panel-header">
+            <h2>Paper Trading <span>(MA100 live)</span></h2>
+            <div class="paper-meta" id="paper-meta">Last logged: — | Position: —</div>
+        </div>
+        <div class="paper-note">Forward test in progress. No proven edge. Not financial advice.</div>
+        <div id="paper-empty" class="panel-empty">Not enough data yet — run `python paper_trade.py` to log more days.</div>
+        <div id="paper-content">
+            <div id="paper-chart" class="paper-chart"></div>
+            <div class="paper-legend">
+                <span class="item"><span class="swatch" style="background:#f7931a"></span> MA100 live</span>
+                <span class="item"><span class="swatch" style="background:#ab47bc"></span> R2</span>
+                <span class="item"><span class="swatch" style="background:#787b86"></span> Buy &amp; Hold</span>
+            </div>
+            <table class="paper-table">
+                <thead><tr><th>Strategy</th><th>End $</th><th>Return</th><th>Max DD</th><th>Trades</th></tr></thead>
+                <tbody id="paper-body"></tbody>
+            </table>
+            <div class="paper-eval" id="paper-eval">Days until evaluation: —</div>
+        </div>
+    </div>
+
     <div class="signal-banner" id="signal-banner">
         <div>
-            <div class="signal-label">Trading Signal</div>
+            <div class="signal-label">Trading Signal <span class="experimental-tag">Experimental - not validated</span></div>
             <div class="signal-value neutral" id="signal-value">—</div>
         </div>
         <div class="signal-reason" id="signal-reason">Calculating signal...</div>
@@ -382,7 +469,7 @@
     </div>
 
     <footer>
-        Data: <code>btc_data.csv</code> &nbsp;|&nbsp; Patterns: <code>hammers.json</code> &nbsp;|&nbsp; Sentiment: <code>sentiment.json</code> &nbsp;|&nbsp; Fundamentals: <code>fundamentals.json</code> &nbsp;|&nbsp;
+        Data: <code>btc_data.csv</code> &nbsp;|&nbsp; Patterns: <code>hammers.json</code> &nbsp;|&nbsp; Sentiment: <code>sentiment.json</code> &nbsp;|&nbsp; Fundamentals: <code>fundamentals.json</code> &nbsp;|&nbsp; Paper log: <code>paper_log.csv</code> &nbsp;|&nbsp;
         Run <code>python detect_hammer.py</code>, <code>python sentiment.py</code>, and <code>python fetch_fundamentals.py</code> to regenerate data.
     </footer>
 
@@ -446,7 +533,7 @@
 
         // ---------- Load data ----------
         async function loadData() {
-            const [csvText, hammersText, sentimentText, fundamentalsText] = await Promise.all([
+            const [csvText, hammersText, sentimentText, fundamentalsText, paperLogText] = await Promise.all([
                 fetch('btc_data.csv').then(r => {
                     if (!r.ok) throw new Error('Could not load btc_data.csv');
                     return r.text();
@@ -463,7 +550,9 @@
                 fetch('fundamentals.json').then(r => {
                     if (!r.ok) throw new Error('Could not load fundamentals.json');
                     return r.text();
-                }).catch(() => 'null')
+                }).catch(() => 'null'),
+                // paper_log.csv is optional - if missing or unreadable, the paper-trade panel shows a stub
+                fetch('paper_log.csv').then(r => r.ok ? r.text() : '').catch(() => '')
             ]);
 
             // Parse CSV
@@ -501,7 +590,7 @@
             // Parse fundamentals.json (may be null if file doesn't exist)
             const fundamentals = JSON.parse(fundamentalsText);
 
-            return { candles, hammerDates, sentiment, fundamentals };
+            return { candles, hammerDates, sentiment, fundamentals, paperLogText };
         }
 
         // ---------- Build chart ----------
@@ -744,6 +833,103 @@
             return div.innerHTML;
         }
 
+        // ---------- Paper trading ----------
+        // Reads paper_log.csv with the same fetch()+parseCSV() method as the other
+        // data files. paper_log.csv columns:
+        // date,close,ma100,signal_ma100,signal_r2,position,fng,rsi_14,
+        // paper_equity_ma100,paper_equity_r2,paper_equity_buyhold,trades_ma100,trades_r2
+        function parsePaperLog(text) {
+            if (!text) return null;
+            const rows = parseCSV(text);
+            if (rows.length < 2) return null;
+            const header = rows[0].map(h => h.trim().toLowerCase());
+            const idx = {};
+            ['date', 'paper_equity_ma100', 'paper_equity_r2', 'paper_equity_buyhold',
+             'position', 'trades_ma100', 'trades_r2'].forEach(k => { idx[k] = header.indexOf(k); });
+            if (idx.date === -1 || idx.paper_equity_ma100 === -1) return null;
+            const data = rows.slice(1).map(r => ({
+                date: r[idx.date].trim(),
+                ma100:  parseFloat(r[idx.paper_equity_ma100]),
+                r2:     parseFloat(r[idx.paper_equity_r2]),
+                bh:     parseFloat(r[idx.paper_equity_buyhold]),
+                pos:    parseInt(r[idx.position], 10),
+                t_m100: parseInt(r[idx.trades_ma100], 10),
+                t_r2:   parseInt(r[idx.trades_r2], 10)
+            })).filter(d => !isNaN(d.ma100) && !isNaN(d.bh) && d.date);
+            return data;
+        }
+
+        function maxDrawdown(values) {
+            let peak = -Infinity, dd = 0;
+            for (const v of values) {
+                if (v > peak) peak = v;
+                if (peak > 0) {
+                    const d = (peak - v) / peak * 100;
+                    if (d > dd) dd = d;
+                }
+            }
+            return dd;
+        }
+
+        function renderPaperTrade(text) {
+            const emptyEl   = document.getElementById('paper-empty');
+            const contentEl = document.getElementById('paper-content');
+            const data = parsePaperLog(text);
+
+            // < 2 rows -> friendly stub (requirement: no empty chart)
+            if (!data || data.length < 2) {
+                emptyEl.style.display = 'block';
+                contentEl.style.display = 'none';
+                return;
+            }
+            emptyEl.style.display = 'none';
+            contentEl.style.display = 'block';
+
+            const last  = data[data.length - 1];
+            const first = data[0];
+            document.getElementById('paper-meta').textContent =
+                `Last logged: ${last.date} | Position: ${last.pos === 1 ? 'LONG' : 'CASH'}`;
+
+            // Equity line chart (MA100 live + R2 + buy & hold), all start from $1000
+            const chart = LightweightCharts.createChart(document.getElementById('paper-chart'), {
+                layout: { background: { type: 'solid', color: '#131722' }, textColor: '#787b86', fontSize: 11 },
+                grid: { vertLines: { color: 'rgba(42,46,57,0.5)' }, horzLines: { color: 'rgba(42,46,57,0.5)' } },
+                rightPriceScale: { borderColor: '#2a2e39' },
+                timeScale: { borderColor: '#2a2e39' },
+                autoSize: true
+            });
+            const sMa100 = chart.addLineSeries({ color: '#f7931a', lineWidth: 2 });
+            sMa100.setData(data.map(d => ({ time: d.date, value: d.ma100 })));
+            const sR2 = chart.addLineSeries({ color: '#ab47bc' });
+            sR2.setData(data.map(d => ({ time: d.date, value: d.r2 })));
+            const sBh = chart.addLineSeries({ color: '#787b86' });
+            sBh.setData(data.map(d => ({ time: d.date, value: d.bh })));
+            chart.timeScale().fitContent();
+
+            // Summary table (end equity, return, max DD, trades)
+            const endRow = (label, end, values, trades) => {
+                const ret = ((end - 1000) / 1000 * 100).toFixed(2) + '%';
+                const dd = maxDrawdown(values).toFixed(2) + '%';
+                const tr = (trades === 0 || trades == null) ? '—' : String(trades);
+                return `<tr><td>${label}</td><td>${end.toFixed(2)}</td><td>${ret}</td><td>${dd}</td><td>${tr}</td></tr>`;
+            };
+            document.getElementById('paper-body').innerHTML =
+                endRow('MA100 live', last.ma100, data.map(d => d.ma100), last.t_m100) +
+                endRow('R2',        last.r2,   data.map(d => d.r2),   last.t_r2) +
+                endRow('Buy &amp; Hold', last.bh, data.map(d => d.bh), 0);
+
+            // Days until evaluation (first logged date + 90 days, per RULES_FROZEN.md)
+            const evalDate = new Date(first.date + 'T00:00:00Z');
+            evalDate.setUTCDate(evalDate.getUTCDate() + 90);
+            const today = new Date();
+            const days = Math.round((evalDate - today) / 86400000);
+            const evalStr = evalDate.toISOString().slice(0, 10);
+            const line = days > 0 ? `Days until evaluation: ${days}`
+                : days === 0 ? `Evaluation day: ${evalStr}`
+                : `Evaluation passed (${evalStr})`;
+            document.getElementById('paper-eval').textContent = `${line} (start + 90 days)`;
+        }
+
         // ---------- Main ----------
         async function main() {
             const statusEl = document.getElementById('status');
@@ -752,7 +938,7 @@
             const hammerCountEl = document.getElementById('hammer-count');
 
             try {
-                const { candles, hammerDates, sentiment, fundamentals } = await loadData();
+                const { candles, hammerDates, sentiment, fundamentals, paperLogText } = await loadData();
                 const { markers } = buildChart(candles, hammerDates);
 
                 candleCountEl.textContent = `Candles: ${candles.length}`;
@@ -762,6 +948,8 @@
 
                 const signal = determineSignal(candles, hammerDates, sentiment, fundamentals);
                 renderSignal(signal);
+
+                renderPaperTrade(paperLogText);
 
                 statusEl.classList.add('loaded');
                 statusEl.classList.remove('error');
